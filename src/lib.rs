@@ -257,6 +257,22 @@ impl Build {
             // OpenSSL's own build docs recommend the flag for exactly this
             // "one-time build" case regardless of the quoting issue.
             configure.arg("no-makedepend");
+            // agent-harbor patch, part 3: once part 2 (no-makedepend) gets
+            // every ordinary .c file past the quoting bug, the only
+            // remaining Windows build failure is generating the x86_64 GNU-
+            // assembler SM3 perlasm (crypto/sm3/asm/sm3-x86_64.pl), which
+            // dies inside an `eval` with `Number found where operator
+            // expected ... near "$-144"` under this Strawberry Perl release
+            // (5.42.3.1) -- a perl-version-sensitive bug in that one
+            // generator script, unrelated to the `$`/quoting issues above.
+            // SM2/SM3/SM4 are the Chinese national-standard algorithms;
+            // nothing in this workspace's use of libcrypto/libssl (plain
+            // TLS/AES via SQLCipher) touches them, so disabling all three
+            // avoids the broken generator rather than chasing a perl
+            // compatibility bug in code this project never calls.
+            configure.arg("no-sm2");
+            configure.arg("no-sm3");
+            configure.arg("no-sm4");
         } else {
             let openssl_dir = self
                 .openssl_dir

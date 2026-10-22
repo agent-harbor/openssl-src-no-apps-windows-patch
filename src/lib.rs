@@ -229,6 +229,34 @@ impl Build {
             );
             configure.arg(dir_arg);
             configure.arg("no-apps");
+            // agent-harbor patch, part 2: even with the `$`-free openssldir
+            // above, this host's `cmd.exe` fails EVERY compile with
+            // `NMAKE : fatal error U1077` / `'"cl.exe"' is not recognized`.
+            // OpenSSL's own Windows makefile template always double-quotes
+            // the compiler macro (`CC="cl"` by its own VC-WIN64A default,
+            // independent of any inherited `CC` env var -- confirmed by
+            // testing with `CC` unset: the generated makefile still reads
+            // `CC="cl"`), and its dependency-generation rule wraps the
+            // whole `$(CC) ... > file.d 2>&1` line in a SECOND, outer pair
+            // of quotes for `cmd /C "..."`. That nested-quote command is
+            // standard, long-used OpenSSL Windows build machinery and works
+            // on most hosts, but this one's `cmd.exe` does not strip the
+            // outer pair (`cmd /C` and the makefile's "exactly 2 quotes +
+            // no `&<>()@^|` between them" fast path do not apply once any
+            // compiler flag's own quoting pushes the total past two), so
+            // `argv[0]` ends up literally starting with `"`, which fails to
+            // resolve to anything. `no-makedepend` (OpenSSL's documented
+            // Configure option for "always do a clean build, skip
+            // generating per-file .d dependency rules") removes exactly the
+            // redirection that adds this second quote layer, since compiles
+            // are then invoked directly rather than wrapped in
+            // `cmd /C "... > file.d 2>&1"`. This project always builds this
+            // vendored OpenSSL from a clean `target/`/`OUT_DIR` (a fresh,
+            // one-shot build, never incrementally re-built in place), so
+            // losing per-file dependency tracking costs nothing here, and
+            // OpenSSL's own build docs recommend the flag for exactly this
+            // "one-time build" case regardless of the quoting issue.
+            configure.arg("no-makedepend");
         } else {
             let openssl_dir = self
                 .openssl_dir

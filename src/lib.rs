@@ -183,19 +183,51 @@ impl Build {
         // default locations of the OpenSSL build scripts, or as specified by whatever
         // configured this builder.
         if target.contains("windows") {
-            configure.arg("--openssldir=SYS$MANAGER:[OPENSSL]");
-            // agent-harbor patch (SYS$MANAGER:[OPENSSL] nmake corruption):
-            // without `no-apps`, OpenSSL still builds its `apps/` CLI
-            // applet sources even though this sentinel means "do not
-            // install anywhere". At least one of those applet sources bakes
-            // OPENSSLDIR into a `-D` macro, and nmake's own `$`-is-a-macro-
-            // reference syntax then consumes the literal `$M` in
-            // `SYS$MANAGER`, corrupting it to `SYS\ANAGER:[OPENSSL]` and
-            // failing the build with `NMAKE : fatal error U1077`. `no-apps`
-            // means the apps/ sources (which this project never uses, only
-            // libssl/libcrypto) are never compiled, so they never see the
-            // sentinel. See agent-harbor-pm issues/2026-10-22-vendored-
-            // openssl-fails-nmake-on-windows-for-any-ah-cli-build.md.
+            // agent-harbor patch: upstream passes the VMS-style sentinel
+            // `SYS$MANAGER:[OPENSSL]` here, meaning "not really installed
+            // anywhere" (inert on real VMS, where that path shape exists;
+            // meaningless on Windows, which is the point). OpenSSL's own
+            // Windows makefile generator writes this value into every
+            // compiled file's `-D"OPENSSLDIR=..."` flag (crypto/, ssl/,
+            // providers/ and apps/ alike, not just apps/), escaping its `$`
+            // as `\$` for nmake's macro expander. nmake does not treat `\`
+            // as an escape before `$`: it still reads `$M` as a reference to
+            // an undefined single-letter macro `M`, which expands to
+            // nothing, so the backslash survives and `SYS$MANAGER:[OPENSSL]`
+            // is corrupted to `SYS\ANAGER:[OPENSSL]` -- a malformed string
+            // literal that `cl.exe` then rejects, failing EVERY build with
+            // `NMAKE : fatal error U1077` the first time nmake expands that
+            // flag, typically on the very first object file. This is an
+            // OpenSSL/nmake interaction bug independent of `openssl-src`;
+            // the fix here is simply to never hand nmake a sentinel value
+            // containing `$` in the first place. A real (but never written
+            // to -- nothing in a `no-shared no-tests` static-lib vendored
+            // build ever runs `nmake install`) directory under the crate's
+            // own build output serves exactly the same "openssldir is
+            // inert" purpose without the `$`, and matches the MSVC
+            // `--prefix` branch just above in using `/` separators, since a
+            // literal Windows `\` deep inside the double-quoted macro value
+            // generates its own escaping headaches in cl.exe's command-line
+            // parsing. See agent-harbor-pm issues/2026-10-22-vendored-
+            // openssl-fails-nmake-on-windows-for-any-ah-cli-build.md and
+            // 2026-10-22-ah-cli-cannot-build-fresh-on-windows-openssl-src-
+            // apps-hit-sys-manager.md for the investigation (those issues'
+            // own "add no-apps" theory turned out to be incomplete: the
+            // corruption reproduces on ordinary libcrypto sources with
+            // `no-apps` passed too, since OPENSSLDIR is a global flag, not
+            // an apps/-only one -- confirmed by this patch's own before/after
+            // testing). `no-apps` is kept anyway: this project only ever
+            // links `libssl`/`libcrypto`, never the `openssl` CLI applet, so
+            // there is no reason to compile it.
+            let unused_openssldir = install_dir.join("unused-openssldir");
+            let mut dir_arg: OsString = "--openssldir=".into();
+            dir_arg.push(
+                unused_openssldir
+                    .to_str()
+                    .ok_or("bad install_dir")?
+                    .replace('\\', "/"),
+            );
+            configure.arg(dir_arg);
             configure.arg("no-apps");
         } else {
             let openssl_dir = self

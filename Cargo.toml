@@ -134,9 +134,5 @@ ktls = []
 # Disable DSO API support
 no-dso = []
 
-[workspace]
-members = ['testcrate']
-exclude = ['target']
-
 [dependencies]
 cc = "1.0.79"
